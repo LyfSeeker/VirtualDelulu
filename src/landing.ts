@@ -93,7 +93,7 @@ export function showLanding(): Promise<LandingResult> {
       } catch (err) {
         console.warn("[landing] camera error:", err);
         setCameraStatus(
-          "Camera blocked. Enable it in your browser, or continue without to watch the AI puppet.",
+          "Camera blocked. Enable it in your browser, or continue without to watch Delulu.",
           "err",
         );
       } finally {
@@ -106,7 +106,7 @@ export function showLanding(): Promise<LandingResult> {
       (window as unknown as { SpeechRecognition?: RecCtor }).SpeechRecognition ??
       (window as unknown as { webkitSpeechRecognition?: RecCtor }).webkitSpeechRecognition;
     if (!Ctor) {
-      setSttStatus("Speech input needs Chrome or Edge — puppets still work without it.", "warn");
+      setSttStatus("Speech input works best in Chrome or Edge — Delulu still works without it.", "warn");
       sttText.placeholder = "Speech recognition unavailable in this browser.";
       sttText.disabled = true;
       sttBtn.disabled = true;
@@ -235,7 +235,7 @@ export function showLanding(): Promise<LandingResult> {
       voiceSelect.innerHTML = "";
       const auto = document.createElement("option");
       auto.value = "";
-      auto.textContent = "Auto (AI picks)";
+      auto.textContent = "Auto (Delulu picks)";
       voiceSelect.appendChild(auto);
       for (const v of en) {
         const opt = document.createElement("option");
@@ -260,7 +260,7 @@ export function showLanding(): Promise<LandingResult> {
       const synth = window.speechSynthesis;
       if (!synth) return;
       const u = new SpeechSynthesisUtterance(
-        "Hello! This is your puppet voice. The show is about to begin.",
+        "Namaskaaram! I'm Delulu. Shall we begin our little show?",
       );
       u.rate = 1.0;
       u.pitch = 0.95;

@@ -38,7 +38,7 @@ export class Hud {
       <div class="hud-bar">
         <span class="hud-item"><span class="hud-dot" data-id="cam" data-status="idle"></span> CAM</span>
         <span class="hud-item"><span class="hud-dot" data-id="mic" data-status="idle"></span> MIC</span>
-        <span class="hud-item"><span class="hud-dot" data-id="ai"  data-status="idle"></span> AI</span>
+          <span class="hud-item"><span class="hud-dot" data-id="ai"  data-status="idle"></span> DELULU</span>
       </div>
     `;
     document.body.appendChild(root);
@@ -102,16 +102,16 @@ export class Hud {
   }
   setAi(state: AiState) {
     const s: Status = state === "thinking" ? "warn" : state === "speaking" ? "ok" : "idle";
-    this.set(this.aiDot, s, `AI ${state}`);
+    this.set(this.aiDot, s, `Delulu ${state}`);
   }
 
   setConnection(state: ConnState) {
     if (state === "connected") {
       this.hideBanner();
     } else if (state === "reconnecting") {
-      this.showBanner("Reconnecting to AI…");
+      this.showBanner("Finding Delulu again…");
     } else {
-      this.showBanner("AI disconnected — reconnecting…");
+      this.showBanner("Delulu wandered off — reconnecting…");
     }
   }
 
@@ -136,8 +136,8 @@ export class Hud {
       this.dreaming.hidden = false;
       this.dreamingLabel.textContent =
         this.dreamingCount > 1
-          ? `Building new props ×${this.dreamingCount}…`
-          : "Building new prop…";
+          ? `Delulu is dreaming up props ×${this.dreamingCount}…`
+          : "Delulu is dreaming up a prop…";
     }
   }
 
