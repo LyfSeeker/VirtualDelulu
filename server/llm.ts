@@ -1,0 +1,171 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { ACTION_JSON_SCHEMA, type Action, type VoiceInfo } from "./protocol.ts";
+
+export type ChatMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string };
+
+export interface LLMBackend {
+  name: string;
+  generateAction(messages: ChatMessage[], opts?: { tag?: string }): Promise<Action>;
+  pickVoice(voices: VoiceInfo[]): Promise<string | null>;
+}
+
+// Default brain. The constructor accepts an override so the server can
+// route per-session traffic to Haiku for the "small brain" mode.
+const DEFAULT_MODEL = "claude-opus-4-7";
+
+const VOICE_PICK_SYSTEM = `You pick browser SpeechSynthesis voices for character TTS. Output JSON only, matching the given schema.`;
+
+const VOICE_PICK_SCHEMA = {
+  name: "voice_pick",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      voiceURI: {
+        type: "string",
+        description: "Exact voiceURI from the provided list, or empty string if none fit.",
+      },
+    },
+    required: ["voiceURI"],
+  },
+} as const;
+
+function truncate(s: string, n: number): string {
+  const oneLine = s.replace(/\s+/g, " ").trim();
+  return oneLine.length <= n ? oneLine : oneLine.slice(0, n - 1) + "…";
+}
+
+export class AnthropicBackend implements LLMBackend {
+  readonly name: string;
+  private client = new Anthropic();
+  // Haiku 4.5 rejects `output_config.effort`. Opus/Sonnet accept it and
+  // we explicitly want "low" so extended thinking stays off.
+  private readonly supportsEffort: boolean;
+
+  constructor(private readonly model: string = DEFAULT_MODEL) {
+    this.name = `anthropic-${model}`;
+    this.supportsEffort = !/haiku/i.test(model);
+  }
+
+  async generateAction(messages: ChatMessage[], opts?: { tag?: string }): Promise<Action> {
+    const systemParts: string[] = [];
+    const turns: Anthropic.MessageParam[] = [];
+    for (const m of messages) {
+      if (m.role === "system") systemParts.push(m.content);
+      else turns.push({ role: m.role, content: m.content });
+    }
+
+    const lastTurn = turns[turns.length - 1];
+    const lastPreview =
+      typeof lastTurn?.content === "string"
+        ? truncate(lastTurn.content, 200)
+        : "(non-text)";
+    const tag = opts?.tag ? ` ${opts.tag}` : "";
+    console.log(
+      `[brain${tag} →] ${this.model} turns=${turns.length} last(${lastTurn?.role})="${lastPreview}"`,
+    );
+    const t0 = performance.now();
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 600,
+      // System prompt is stable across turns. Marking it as a cache
+      // breakpoint lets subsequent calls reuse the cached prefix
+      // (cheaper reads, lower TTFT) once the prefix is long enough —
+      // Opus 4.7 requires ≥ 4096 cacheable tokens, Haiku 4.5 ≥ 1024.
+      // The Anthropic API expects `cache_control` on a content block,
+      // not as a top-level argument.
+      system: [
+        {
+          type: "text",
+          text: systemParts.join("\n\n"),
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: turns,
+      output_config: {
+        // low effort: short, structured reply, no heavy reasoning needed.
+        // Skipped on Haiku (the API rejects `effort` for that model).
+        ...(this.supportsEffort ? { effort: "low" as const } : {}),
+        format: { type: "json_schema", schema: ACTION_JSON_SCHEMA.schema },
+      },
+    });
+
+    const dt = Math.round(performance.now() - t0);
+    const usage = response.usage;
+    const cacheHit = usage?.cache_read_input_tokens ?? 0;
+    const cacheWrite = usage?.cache_creation_input_tokens ?? 0;
+    console.log(
+      `[brain${tag} ←] ${dt}ms in=${usage?.input_tokens ?? "?"} out=${usage?.output_tokens ?? "?"} cache(r/w)=${cacheHit}/${cacheWrite}`,
+    );
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error(`Anthropic returned no text block: ${JSON.stringify(response.content)}`);
+    }
+    const obj = JSON.parse(textBlock.text);
+    const fxCount = Array.isArray(obj.effects) ? obj.effects.length : 0;
+    const sayPreview = typeof obj.say === "string" ? truncate(obj.say, 120) : "";
+    console.log(
+      `[brain${tag}] reply: say="${sayPreview}" emotion=${obj.emotion ?? "?"} gaze=${obj.gaze ?? "?"} gesture=${obj.gesture ?? "?"} fx=${fxCount}`,
+    );
+    return {
+      say: typeof obj.say === "string" ? obj.say : undefined,
+      emotion: obj.emotion,
+      gaze: obj.gaze,
+      gesture: obj.gesture,
+      effects: Array.isArray(obj.effects) ? obj.effects : undefined,
+    };
+  }
+
+  async pickVoice(voices: VoiceInfo[]): Promise<string | null> {
+    if (voices.length === 0) return null;
+    // Cap the list: browsers with 100+ voices blow token count for no gain.
+    const list = voices.slice(0, 60);
+    const table = list
+      .map(
+        (v, i) =>
+          `${i}. ${JSON.stringify(v.name)} lang=${v.lang} local=${v.localService} uri=${JSON.stringify(v.voiceURI)}`,
+      )
+      .join("\n");
+
+    const prompt = `Pick the best voice for a cheerful, goofy male hand-puppet speaking English to young kids. The voice should sound:
+- Clearly male, warm, friendly, a little playful
+- English (en-*), any dialect
+- Clear and pleasant for kids — not robotic, not monotone, not sinister
+
+Reject voices that sound female, non-English, or obviously synthetic/harsh.
+Return the exact voiceURI string from the list below (copy it verbatim).
+If no voice fits, return an empty string.
+
+Voices:
+${table}`;
+
+    console.log(`[voice-pick] → ${this.model} voices=${list.length}`);
+    const t0 = performance.now();
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 200,
+      system: VOICE_PICK_SYSTEM,
+      messages: [{ role: "user", content: prompt }],
+      output_config: {
+        ...(this.supportsEffort ? { effort: "low" as const } : {}),
+        format: { type: "json_schema", schema: VOICE_PICK_SCHEMA.schema },
+      },
+    });
+
+    const dt = Math.round(performance.now() - t0);
+    console.log(`[voice-pick] ← ${dt}ms`);
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return null;
+    try {
+      const parsed = JSON.parse(textBlock.text) as { voiceURI?: unknown };
+      if (typeof parsed.voiceURI !== "string" || parsed.voiceURI.length === 0) return null;
+      // Verify it actually exists in the list — belt and braces.
+      return list.some((v) => v.voiceURI === parsed.voiceURI) ? parsed.voiceURI : null;
+    } catch {
+      return null;
+    }
+  }
+}

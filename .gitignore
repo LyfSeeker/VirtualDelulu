@@ -1,0 +1,10 @@
+node_modules
+dist
+.vite
+*.log
+.DS_Store
+.idea
+.vscode
+.claude/
+presentation-assets/seg-*.mp4
+generated-assets/

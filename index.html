@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Puppet Theater</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        color: #ccc;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      #video {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        width: 200px;
+        height: auto;
+        transform: scaleX(-1);
+        border: 1px solid #222;
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 1;
+      }
+      #landmark-canvas {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        width: 200px;
+        height: auto;
+        border: 1px solid #222;
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 2;
+      }
+      #scene {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        z-index: 3;
+      }
+
+      /* Debug-mode visibility cycle, driven by body[data-debug]:
+         "camera"          — full-screen webcam, nothing else
+         "camera-markers"  — full-screen webcam + landmark overlay
+         "camera-puppet"   — full-screen webcam + puppets (no theater)
+         (no attribute)    — normal mode */
+      body[data-debug^="camera"] #video {
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        object-fit: cover;
+        border: 0;
+        border-radius: 0;
+        z-index: 0;
+      }
+      body[data-debug="camera-markers"] #landmark-canvas {
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        border: 0;
+        border-radius: 0;
+      }
+      body[data-debug="camera"] #landmark-canvas,
+      body[data-debug="camera-puppet"] #landmark-canvas {
+        display: none;
+      }
+      body[data-debug="camera"] #scene,
+      body[data-debug="camera-markers"] #scene {
+        display: none;
+      }
+      body[data-debug="camera-puppet"] #scene {
+        background: transparent;
+      }
+
+      /* ---------- Landing ---------- */
+      #landing {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at center, #15141a 0%, #050507 70%);
+        transition: opacity 0.4s ease-out;
+      }
+      #landing.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .landing-card {
+        width: min(560px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow-y: auto;
+        padding: 28px 32px 24px;
+        background: #0e0d12;
+        border: 1px solid #2a2731;
+        border-radius: 10px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+      }
+      .landing-title {
+        font-size: 20px;
+        letter-spacing: 0.5px;
+        color: #e8e3d8;
+        margin: 0 0 4px;
+      }
+      .landing-sub {
+        font-size: 12px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #7c7388;
+        margin: 0 0 20px;
+      }
+      .landing-section {
+        margin-bottom: 18px;
+      }
+      .landing-section h3 {
+        font-size: 11px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #b8a48a;
+        margin: 0 0 8px;
+        font-weight: 600;
+      }
+      #landing-camera-preview {
+        width: 100%;
+        max-width: 220px;
+        aspect-ratio: 4 / 3;
+        background: #060509;
+        border: 1px solid #2a2731;
+        border-radius: 6px;
+        transform: scaleX(-1);
+        object-fit: cover;
+        display: block;
+      }
+      #landing-stt-text {
+        width: 100%;
+        height: 60px;
+        background: #060509;
+        color: #d8cfe2;
+        border: 1px solid #2a2731;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 13px;
+        resize: none;
+        box-sizing: border-box;
+      }
+      .landing-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .status {
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.4;
+      }
+      .status.pending { color: #8d839b; }
+      .status.ok      { color: #7fb3a0; }
+      .status.warn    { color: #d4a85a; }
+      .status.err     { color: #d8745f; }
+      button.landing-btn,
+      select.landing-select {
+        background: #1c1924;
+        color: #e8e3d8;
+        border: 1px solid #38323f;
+        border-radius: 6px;
+        padding: 7px 14px;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      button.landing-btn:hover:not(:disabled),
+      select.landing-select:hover {
+        background: #26222e;
+        border-color: #4a424f;
+      }
+      button.landing-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      #landing-start {
+        display: block;
+        width: 100%;
+        margin-top: 12px;
+        padding: 12px 18px;
+        font-size: 14px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        background: linear-gradient(90deg, #d98b4f, #7fb3a0);
+        color: #0a0a0c;
+        border: 0;
+        font-weight: 600;
+      }
+      #landing-start:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+      .brain-row {
+        display: flex;
+        gap: 8px;
+      }
+      .brain-pill {
+        flex: 1;
+        background: #1c1924;
+        color: #e8e3d8;
+        border: 1px solid #38323f;
+        border-radius: 6px;
+        padding: 9px 12px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        text-align: left;
+        line-height: 1.35;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .brain-pill:hover {
+        background: #26222e;
+        border-color: #4a424f;
+      }
+      .brain-pill.active {
+        border-color: #d98b4f;
+        background: #2a1f1c;
+      }
+      .brain-pill-title {
+        display: block;
+        font-weight: 600;
+        color: #f1d8b8;
+      }
+      .brain-pill-sub {
+        display: block;
+        font-size: 10px;
+        color: #8d839b;
+        margin-top: 2px;
+      }
+      .brain-pill.active .brain-pill-sub {
+        color: #b8a48a;
+      }
+
+      /* ---------- HUD ---------- */
+      #hud {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        z-index: 5;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+        pointer-events: none;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        transform: scale(2);
+        transform-origin: bottom right;
+      }
+      .hud-bar {
+        display: flex;
+        gap: 12px;
+        padding: 6px 10px;
+        background: rgba(10, 9, 14, 0.7);
+        border: 1px solid #2a2731;
+        border-radius: 6px;
+        font-size: 10px;
+        letter-spacing: 1.5px;
+        color: #b8a48a;
+        backdrop-filter: blur(6px);
+      }
+      .hud-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .hud-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #4a424f;
+        transition: background 0.2s, box-shadow 0.2s;
+      }
+      .hud-dot[data-status="ok"] {
+        background: #7fb3a0;
+        box-shadow: 0 0 6px rgba(127, 179, 160, 0.6);
+      }
+      .hud-dot[data-status="warn"] {
+        background: #d4a85a;
+        box-shadow: 0 0 6px rgba(212, 168, 90, 0.6);
+      }
+      .hud-dot[data-status="err"] {
+        background: #d8745f;
+        box-shadow: 0 0 6px rgba(216, 116, 95, 0.6);
+      }
+      .hud-banner {
+        padding: 6px 12px;
+        background: rgba(60, 30, 12, 0.85);
+        border: 1px solid #6a4020;
+        border-radius: 6px;
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        color: #f1d8b8;
+        max-width: 280px;
+      }
+      .hud-banner[hidden] {
+        display: none;
+      }
+      .hud-toasts {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
+      }
+      .hud-toast {
+        padding: 7px 12px;
+        background: rgba(20, 18, 26, 0.92);
+        border: 1px solid #38323f;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #e8e3d8;
+        max-width: 280px;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.25s, transform 0.25s;
+      }
+      .hud-toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .hud-stt {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: rgba(10, 9, 14, 0.7);
+        border: 1px solid #2a2731;
+        border-radius: 6px;
+        font-size: 11px;
+        color: #b8a48a;
+        backdrop-filter: blur(6px);
+        max-width: 360px;
+      }
+      .hud-stt[data-state="listening"] { border-color: #3a5a4f; }
+      .hud-stt[data-state="hearing"] {
+        border-color: #7fb3a0;
+        box-shadow: 0 0 10px rgba(127, 179, 160, 0.3);
+      }
+      .hud-stt[data-state="denied"],
+      .hud-stt[data-state="error"],
+      .hud-stt[data-state="unsupported"] {
+        border-color: #6a3a32;
+        color: #d8a89a;
+      }
+      .hud-stt-status {
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .hud-stt-text {
+        color: #e8e3d8;
+        font-style: italic;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hud-stt-text[data-final="true"] { font-style: normal; color: #f5ead4; }
+      .hud-stt-text[hidden] { display: none; }
+      .hud-dreaming {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: linear-gradient(135deg, rgba(63, 31, 91, 0.85), rgba(31, 18, 50, 0.85));
+        border: 1px solid #6a4a8e;
+        border-radius: 6px;
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        color: #e8d8f5;
+        box-shadow: 0 0 16px rgba(150, 100, 220, 0.25);
+        animation: hud-dreaming-pulse 1.6s ease-in-out infinite;
+      }
+      .hud-dreaming[hidden] {
+        display: none;
+      }
+      .hud-dreaming-icon {
+        display: inline-block;
+        animation: hud-dreaming-spin 4s linear infinite;
+      }
+      @keyframes hud-dreaming-pulse {
+        0%, 100% { box-shadow: 0 0 12px rgba(150, 100, 220, 0.2); }
+        50% { box-shadow: 0 0 24px rgba(180, 130, 240, 0.45); }
+      }
+      @keyframes hud-dreaming-spin {
+        0%, 100% { transform: rotate(-6deg) scale(1); }
+        50% { transform: rotate(6deg) scale(1.15); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="landing">
+      <div class="landing-card">
+        <h1 class="landing-title">Virtual Puppet Theater</h1>
+        <p class="landing-sub">Pre-flight check</p>
+
+        <section class="landing-section">
+          <h3>Camera</h3>
+          <video id="landing-camera-preview" playsinline muted></video>
+          <div id="landing-camera-status" class="status pending">Requesting camera…</div>
+        </section>
+
+        <section class="landing-section">
+          <h3>Microphone</h3>
+          <div id="landing-stt-status" class="status pending">Checking speech recognition…</div>
+          <textarea
+            id="landing-stt-text"
+            readonly
+            placeholder="Speak — what we hear appears here."
+          ></textarea>
+          <div id="landing-stt-trace" class="status pending" style="font-size: 10px; font-family: ui-monospace, monospace; min-height: 1em"></div>
+          <div class="landing-row" style="margin-top: 8px">
+            <button id="landing-stt-btn" class="landing-btn" type="button">Test microphone</button>
+          </div>
+        </section>
+
+        <section class="landing-section">
+          <h3>Voice</h3>
+          <div class="landing-row">
+            <button id="landing-tts-btn" class="landing-btn" type="button">Say hello</button>
+            <select id="landing-voice-select" class="landing-select" aria-label="AI puppet voice">
+              <option value="">Auto (AI picks)</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="landing-section">
+          <h3>Puppet brain</h3>
+          <div class="brain-row" role="radiogroup" aria-label="Brain size">
+            <button
+              id="landing-brain-large"
+              class="brain-pill active"
+              type="button"
+              role="radio"
+              aria-checked="true"
+            >
+              <span class="brain-pill-title">Large brain</span>
+              <span class="brain-pill-sub">Smarter but slower (Claude Opus)</span>
+            </button>
+            <button
+              id="landing-brain-small"
+              class="brain-pill"
+              type="button"
+              role="radio"
+              aria-checked="false"
+            >
+              <span class="brain-pill-title">Small brain</span>
+              <span class="brain-pill-sub">Less smart but faster (Claude Haiku)</span>
+            </button>
+          </div>
+        </section>
+
+        <button id="landing-start" type="button" disabled>Start the show</button>
+      </div>
+    </div>
+
+    <video id="video" playsinline></video>
+    <canvas id="landmark-canvas"></canvas>
+    <canvas id="scene"></canvas>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"
+      integrity="sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

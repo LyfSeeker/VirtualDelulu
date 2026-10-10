@@ -1,0 +1,33 @@
+{
+  "name": "virtual-delulu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "dev:server": "bun run --hot server/index.ts",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "bun test",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "gen:asset": "bun run scripts/generate-asset.ts",
+    "gen:batch": "bun run scripts/batch-generate.ts",
+    "gen:refine": "bun run scripts/refine-props.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.0",
+    "@elevenlabs/elevenlabs-js": "^2.44.0",
+    "@mediapipe/hands": "^0.4.1675469240",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/three": "^0.184.0",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.61.0",
+    "playwright": "^1.59.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  }
+}
